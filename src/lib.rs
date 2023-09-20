@@ -52,6 +52,29 @@ pub struct TilemapRef<'a> {
     pub data: Cow<'a, [u8]>,
 }
 
+impl TilemapRef<'static> {
+    pub fn new_zeroed(size: Vec2<u32>) -> Self {
+        TilemapRef {
+            tile_size: size,
+            data: Cow::Owned(vec![0; size.x as usize * size.y as usize]),
+        }
+    }
+}
+
+impl<'a> TilemapRef<'a> {
+    /// Get the tile at the specified position.
+    #[inline(always)]
+    pub fn get_tile(&self, x: u32, y: u32) -> u8 {
+        self.data.as_ref()[self.tile_size.x as usize * y as usize + x as usize]
+    }
+
+    /// Put a tile at the specified position.
+    #[inline(always)]
+    pub fn put_tile(&mut self, x: u32, y: u32, val: u8) {
+        self.data.to_mut()[self.tile_size.x as usize * y as usize + x as usize] = val;
+    }
+}
+
 /// A reference to tileset data to be uploaded as a texture. This is the image data drawn for each
 /// tile of the corresponding tilemap.
 #[derive(Clone, Debug)]
@@ -61,7 +84,7 @@ pub struct TilesetRef<'a> {
     /// Size of each tile in this tileset.
     pub size_of_tile: Vec2<u32>,
     /// Interpreted as `wgpu::TextureFormat::Rgba8UnormSrgb`
-    pub data: &'a [u32],
+    pub data: Cow<'a, [u32]>,
 }
 
 /// An instruction to draw a tilemap.
@@ -70,7 +93,7 @@ pub struct TilemapDrawData<'a> {
     /// A matrix that maps from [0, 1]x[0, 1] to world coordinates for this tilemap.
     pub transform: Mat4<f32>,
     /// The data to be used for this tilemap.
-    pub tilemap: &'a TilemapRef<'a>,
+    pub tilemap: Cow<'a, TilemapRef<'a>>,
     /// The index into the array of tilesets last provided to the most recent `TilemapPipeline::upload_tilesets` call that this tilemap should be drawn with.
     pub tileset: u32,
     /// How much noise this tilemap should be drawn with.
@@ -222,14 +245,6 @@ impl HasTextureAllocation for TilesetCache {
         &self.data_texture
     }
 }
-/*: depth_format.map(|format| wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth16Unorm,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Greater,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-*/
 
 impl TilemapPipeline {
     /// Create a new `TilemapPipeline` capable of rendering to the provided `texture_format`.
@@ -466,7 +481,7 @@ impl TilemapPipeline {
                 |i, datum| {
                     self.active_tilesets
                         .push(((tileset.pixel_size, tileset.size_of_tile), i as u32));
-                    let texture_data = tileset.data;
+                    let texture_data = &tileset.data;
                     let idl = wgpu::ImageDataLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * tileset.size_of_tile.x),
@@ -571,7 +586,6 @@ impl TilemapPipeline {
         });
         let index_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("tilemap_index_texture"),
-            //size: wgpu::Extent3d { width: 1368, height: 768, depth_or_array_layers: 1 },
             size: wgpu::Extent3d {
                 width: size.x,
                 height: size.y,
