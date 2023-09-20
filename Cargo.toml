@@ -1,0 +1,18 @@
+[package]
+name = "wgpu-tilemap"
+version = "0.1.0"
+edition = "2021"
+authors = ["Avi Weinstock <git@aweinstock.com>"]
+
+[dependencies]
+bytemuck = { version = "1.13", features = ["derive"] }
+vek = "0.15"
+wgpu = { version = "0.17" }
+
+serde = { version = "1.0", optional = true }
+wgpu-profiler = { version = "0.14", optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+wgpu-profiler = ["dep:wgpu-profiler"]
