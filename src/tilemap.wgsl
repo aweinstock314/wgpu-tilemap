@@ -61,10 +61,12 @@ fn tilemap_frag_main(data: TilemapFragData) -> @location(0) vec4<f32> {
     let subpos = vec2<u32>(data.pixelpos) % size_of_tile;
     var col: vec4<f32> = textureLoad(tilemap_data, subpos, tile, 0);
     let noise_magnitude = f32(tilemap.noise_data & 0xffffu) / 65536.0;
-    let noise_res = f32((tilemap.noise_data >> 16u) & 0xffu);
-    var noise: vec3<f32> = pcg3d(vec2<f32>(size_of_tile * vec2<u32>(vec2<f32>(noise_res, noise_res) * data.tilepos)));
-    col += noise_magnitude * vec4(noise.x, noise.x, noise.x, 0.0);
-    col = clamp(vec4(0.0, 0.0, 0.0, 0.0), vec4(1.0, 1.0, 1.0, 1.0), col);
+    if noise_magnitude != 0.0 {
+        let noise_res = f32((tilemap.noise_data >> 16u) & 0xffu);
+        var noise: vec3<f32> = pcg3d(vec2<f32>(size_of_tile * vec2<u32>(vec2<f32>(noise_res, noise_res) * data.tilepos)));
+        col += noise_magnitude * vec4(noise.x, noise.x, noise.x, 0.0);
+        col = clamp(vec4(0.0, 0.0, 0.0, 0.0), vec4(1.0, 1.0, 1.0, 1.0), col);
+    }
     if col.a == 0.0 {
         discard;
     }

@@ -3,6 +3,7 @@ name = "wgpu-tilemap"
 version = "0.1.0"
 edition = "2021"
 authors = ["Avi Weinstock <git@aweinstock.com>"]
+license = "Apache-2.0"
 
 [dependencies]
 bytemuck = { version = "1.13", features = ["derive"] }
