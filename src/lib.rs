@@ -1,5 +1,27 @@
+#![doc = include_str!("../README.md")]
 use std::{borrow::Cow, collections::HashMap, hash::Hash, num::NonZeroU64};
-use vek::{Mat4, Vec2};
+use vek::{Mat4, Vec2, Vec4};
+
+const fn mat4_const_from_rows(m: [[f32; 4]; 4]) -> Mat4<f32> {
+    Mat4 {
+        cols: Vec4 {
+            x: Vec4::new(m[0][0], m[1][0], m[2][0], m[3][0]),
+            y: Vec4::new(m[0][1], m[1][1], m[2][1], m[3][1]),
+            z: Vec4::new(m[0][2], m[1][2], m[2][2], m[3][2]),
+            w: Vec4::new(m[0][3], m[1][3], m[2][3], m[3][3]),
+        },
+    }
+}
+
+/// Camera matrix to scale a tilemap to the whole screen.
+/// Maps x and y from [0, 1] to [-1, 1], leaving z and w unchanged.
+#[rustfmt::skip]
+pub const FULLSCREEN_QUAD_CAMERA: Mat4<f32> = mat4_const_from_rows([
+    [2.0, 0.0, 0.0, -1.0],
+    [0.0, 2.0, 0.0, -1.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+]);
 
 /// Apply noise to the tilemap at a multiple of the tile size (e.g. for sand effects).
 /// TilemapNoise::default() applies no noise.
@@ -14,22 +36,25 @@ pub struct TilemapNoise {
 
 impl Default for TilemapNoise {
     fn default() -> TilemapNoise {
-        TilemapNoise { magnitude: 0.0, resolution: 1 }
+        TilemapNoise {
+            magnitude: 0.0,
+            resolution: 1,
+        }
     }
 }
 
 /// A reference to tilemap data to be uploaded as a texture and used as indices into the tileset.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct TilemapRef<'a> {
     /// Size of this tilemap, in tiles.
     pub tile_size: Vec2<u32>,
     /// Assumes a maximum of 256 tiles per tileset, represented as `wgpu::TextureFormat::R8Uint`.
-    pub data: &'a [u8],
+    pub data: Cow<'a, [u8]>,
 }
 
 /// A reference to tileset data to be uploaded as a texture. This is the image data drawn for each
 /// tile of the corresponding tilemap.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct TilesetRef<'a> {
     /// Size of this tileset, in pixels.
     pub pixel_size: Vec2<u32>,
@@ -40,12 +65,12 @@ pub struct TilesetRef<'a> {
 }
 
 /// An instruction to draw a tilemap.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct TilemapDrawData<'a> {
     /// A matrix that maps from [0, 1]x[0, 1] to world coordinates for this tilemap.
     pub transform: Mat4<f32>,
     /// The data to be used for this tilemap.
-    pub tilemap: TilemapRef<'a>,
+    pub tilemap: &'a TilemapRef<'a>,
     /// The index into the array of tilesets last provided to the most recent `TilemapPipeline::upload_tilesets` call that this tilemap should be drawn with.
     pub tileset: u32,
     /// How much noise this tilemap should be drawn with.
@@ -90,7 +115,9 @@ struct FirstFitTextureAllocator<K, T> {
 
 impl<K: Clone + Eq + Hash, T: HasTextureAllocation> FirstFitTextureAllocator<K, T> {
     fn new() -> Self {
-        FirstFitTextureAllocator { map: HashMap::new() }
+        FirstFitTextureAllocator {
+            map: HashMap::new(),
+        }
     }
 
     fn mark_inactive(&mut self) {
@@ -101,14 +128,25 @@ impl<K: Clone + Eq + Hash, T: HasTextureAllocation> FirstFitTextureAllocator<K, 
         }
     }
 
-    fn allocate_and_upload<F, G>(&mut self, size: K, device: &wgpu::Device, queue: &wgpu::Queue, alloc: F, params: &T::Params, callback: G)
-    where
+    fn allocate_and_upload<F, G>(
+        &mut self,
+        size: K,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        alloc: F,
+        params: &T::Params,
+        callback: G,
+    ) where
         F: FnOnce(&wgpu::Device, K) -> T,
         G: FnOnce(usize, &mut T),
     {
         // Find the first inactive allocation of the correct size, or call the provided allocator if none exists.
         let data = self.map.entry(size.clone()).or_insert_with(Vec::new);
-        let (i, datum) = if let Some((i, datum)) = data.iter_mut().enumerate().find(|(_, datum)| !datum.active()) {
+        let (i, datum) = if let Some((i, datum)) = data
+            .iter_mut()
+            .enumerate()
+            .find(|(_, datum)| !datum.active())
+        {
             (i, datum)
         } else {
             let i = data.len();
@@ -184,28 +222,43 @@ impl HasTextureAllocation for TilesetCache {
         &self.data_texture
     }
 }
+/*: depth_format.map(|format| wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth16Unorm,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+*/
 
 impl TilemapPipeline {
     /// Create a new `TilemapPipeline` capable of rendering to the provided `texture_format`.
-    pub fn new(device: &wgpu::Device, texture_format: wgpu::TextureFormat) -> TilemapPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        texture_format: wgpu::TextureFormat,
+        depth_stencil: Option<wgpu::DepthStencilState>,
+    ) -> TilemapPipeline {
         let shader_source = Cow::Borrowed(include_str!("tilemap.wgsl"));
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shaders"),
             source: wgpu::ShaderSource::Wgsl(shader_source),
         });
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("camera_bind_group_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(::std::mem::size_of::<[[f32; 4]; 4]>() as u64),
-                },
-                count: None,
-            }],
-        });
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(
+                            ::std::mem::size_of::<[[f32; 4]; 4]>() as u64
+                        ),
+                    },
+                    count: None,
+                }],
+            });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tilemap_camera_buffer"),
             size: ::std::mem::size_of::<[[f32; 4]; 4]>() as u64,
@@ -226,61 +279,72 @@ impl TilemapPipeline {
             usage: wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false,
         });
-        let tileset_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tileset_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(::std::mem::size_of::<TilesetBuffer>() as u64),
+        let tileset_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tileset_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(
+                                ::std::mem::size_of::<TilesetBuffer>() as u64,
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
-        let tilemap_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tilemap_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(::std::mem::size_of::<TilemapBuffer>() as u64),
+                ],
+            });
+        let tilemap_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tilemap_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(
+                                ::std::mem::size_of::<TilemapBuffer>() as u64,
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
-        let tilemap_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tilemap_pipeline_layout"),
-            bind_group_layouts: &[&camera_bind_group_layout, &tileset_bind_group_layout, &tilemap_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+                ],
+            });
+        let tilemap_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("tilemap_pipeline_layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &tileset_bind_group_layout,
+                    &tilemap_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
         let tilemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("tilemap_pipeline"),
             layout: Some(&tilemap_pipeline_layout),
@@ -290,13 +354,7 @@ impl TilemapPipeline {
                 buffers: &[VERTEX_LAYOUT.clone()],
             },
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth16Unorm,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Greater,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            depth_stencil,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
@@ -323,7 +381,12 @@ impl TilemapPipeline {
             draw_calls,
         }
     }
-    fn allocate_tilesets(device: &wgpu::Device, tileset_bind_group_layout: &wgpu::BindGroupLayout, size: Vec2<u32>, tilesize: Vec2<u32>) -> TilesetCache {
+    fn allocate_tilesets(
+        device: &wgpu::Device,
+        tileset_bind_group_layout: &wgpu::BindGroupLayout,
+        size: Vec2<u32>,
+        tilesize: Vec2<u32>,
+    ) -> TilesetCache {
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tileset_params_buffer"),
             size: ::std::mem::size_of::<TilesetBuffer>() as u64,
@@ -369,7 +432,12 @@ impl TilemapPipeline {
     }
 
     /// Upload a list of tilesets to the GPU, replacing the previous set of tilesets, and reusing texture allocations if the sizes are compatible.
-    pub fn upload_tilesets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tilesets: &[TilesetRef]) {
+    pub fn upload_tilesets(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tilesets: &[TilesetRef],
+    ) {
         self.active_tilesets.clear();
         self.tilesets.mark_inactive();
         for tileset in tilesets.iter() {
@@ -386,10 +454,18 @@ impl TilemapPipeline {
                 (tileset.pixel_size, tileset.size_of_tile),
                 device,
                 queue,
-                |device, (size, tilesize)| TilemapPipeline::allocate_tilesets(device, &self.tileset_bind_group_layout, size, tilesize),
+                |device, (size, tilesize)| {
+                    TilemapPipeline::allocate_tilesets(
+                        device,
+                        &self.tileset_bind_group_layout,
+                        size,
+                        tilesize,
+                    )
+                },
                 &params,
                 |i, datum| {
-                    self.active_tilesets.push(((tileset.pixel_size, tileset.size_of_tile), i as u32));
+                    self.active_tilesets
+                        .push(((tileset.pixel_size, tileset.size_of_tile), i as u32));
                     let texture_data = tileset.data;
                     let idl = wgpu::ImageDataLayout {
                         offset: 0,
@@ -419,11 +495,23 @@ impl TilemapPipeline {
 
     /// Upload a list of tilemaps to be drawn this frame. Each tilemap is drawn with an independent
     /// transform and tileset. Texture allocations of matching sizes are reused.
-    pub fn upload_tilemaps(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tilemaps: &[TilemapDrawData]) {
+    pub fn upload_tilemaps(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tilemaps: &[TilemapDrawData],
+    ) {
         self.draw_calls.mark_inactive();
-        for TilemapDrawData { transform, tilemap, tileset, noise } in tilemaps.iter() {
+        for TilemapDrawData {
+            transform,
+            tilemap,
+            tileset,
+            noise,
+        } in tilemaps.iter()
+        {
             let size = tilemap.tile_size;
-            let noise_data = ((0xffff as f32 * noise.magnitude) as u32 & 0xffff) | ((noise.resolution as u32 & 0xff) << 16);
+            let noise_data = ((0xffff as f32 * noise.magnitude) as u32 & 0xffff)
+                | ((noise.resolution as u32 & 0xff) << 16);
             let params = TilemapBuffer {
                 transform: transform.into_col_arrays(),
                 width: size.x,
@@ -435,11 +523,17 @@ impl TilemapPipeline {
                 size,
                 device,
                 queue,
-                |device, size| TilemapPipeline::allocate_draw_call(device, &self.tilemap_bind_group_layout, size),
+                |device, size| {
+                    TilemapPipeline::allocate_draw_call(
+                        device,
+                        &self.tilemap_bind_group_layout,
+                        size,
+                    )
+                },
                 &params,
                 |_, call| {
                     call.tilesets_index = self.active_tilesets[*tileset as usize];
-                    let texture_data = tilemap.data;
+                    let texture_data = &tilemap.data;
                     queue.write_texture(
                         wgpu::ImageCopyTexture {
                             texture: &call.texture(),
@@ -464,7 +558,11 @@ impl TilemapPipeline {
         }
     }
 
-    fn allocate_draw_call(device: &wgpu::Device, tilemap_bind_group_layout: &wgpu::BindGroupLayout, size: Vec2<u32>) -> TilemapDrawCall {
+    fn allocate_draw_call(
+        device: &wgpu::Device,
+        tilemap_bind_group_layout: &wgpu::BindGroupLayout,
+        size: Vec2<u32>,
+    ) -> TilemapDrawCall {
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tilemap_params_buffer"),
             size: ::std::mem::size_of::<TilemapBuffer>() as u64,
@@ -511,18 +609,36 @@ impl TilemapPipeline {
     }
     /// Set the camera matrix that maps from world coordinates to Normalized Device Coordinates.
     pub fn set_camera(&self, queue: &wgpu::Queue, camera: Mat4<f32>) {
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&camera.into_col_arrays()));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&camera.into_col_arrays()),
+        );
     }
     /// Render the tilemaps to the provided renderpass, whose color attachment must match the
     /// texture format provided when this was created.
-    pub fn render<'a: 'pass, 'pass>(&'a self, device: &wgpu::Device, rpass: &mut wgpu::RenderPass<'pass>) {
+    pub fn render<'a: 'pass, 'pass>(
+        &'a self,
+        device: &wgpu::Device,
+        rpass: &mut wgpu::RenderPass<'pass>,
+    ) {
         self.render_with_profiler_inner(device, rpass, &mut ());
     }
     #[cfg(feature = "wgpu-profiler")]
-    pub fn render_with_profiler<'a: 'pass, 'pass>(&'a self, device: &wgpu::Device, rpass: &mut wgpu::RenderPass<'pass>, gpu_profiler: &mut wgpu_profiler::GpuProfiler) {
+    pub fn render_with_profiler<'a: 'pass, 'pass>(
+        &'a self,
+        device: &wgpu::Device,
+        rpass: &mut wgpu::RenderPass<'pass>,
+        gpu_profiler: &mut wgpu_profiler::GpuProfiler,
+    ) {
         self.render_with_profiler_inner(device, rpass, gpu_profiler);
     }
-    fn render_with_profiler_inner<'a: 'pass, 'pass>(&'a self, device: &wgpu::Device, rpass: &mut wgpu::RenderPass<'pass>, gpu_profiler: &mut impl ProfilerShim) {
+    fn render_with_profiler_inner<'a: 'pass, 'pass>(
+        &'a self,
+        device: &wgpu::Device,
+        rpass: &mut wgpu::RenderPass<'pass>,
+        gpu_profiler: &mut impl ProfilerShim,
+    ) {
         gpu_profiler.begin_scope("tilemap", rpass, device);
         rpass.set_pipeline(&self.tilemap_pipeline);
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));

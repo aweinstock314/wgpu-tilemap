@@ -80,11 +80,11 @@ fn pcg3d(uv: vec2<f32>) -> vec3<f32> {
     v.y += v.z*v.x;
     v.z += v.x*v.y;
 
-    v ^= v >> 16u;
+    v ^= vec3(v.x >> 16u, v.y >> 16u, v.z >> 16u);
 
     v.x += v.y*v.z;
     v.y += v.z*v.x;
     v.z += v.x*v.y;
 
-    return vec3<f32>(v & 0xffu) / 255.0;
+    return vec3<f32>(vec3<u32>(v.x & 0xffu, v.y & 0xffu, v.z & 0xffu)) / 255.0;
 }
