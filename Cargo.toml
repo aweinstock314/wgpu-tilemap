@@ -6,6 +6,7 @@ authors = ["Avi Weinstock <git@aweinstock.com>"]
 
 [dependencies]
 bytemuck = { version = "1.13", features = ["derive"] }
+image = { version = "0.24", default-features = false, optional = true }
 vek = "0.15"
 wgpu = { version = "0.17" }
 
@@ -16,3 +17,4 @@ wgpu-profiler = { version = "0.14", optional = true }
 default = []
 serde = ["dep:serde"]
 wgpu-profiler = ["dep:wgpu-profiler"]
+image = ["dep:image"]

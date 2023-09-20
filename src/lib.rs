@@ -87,6 +87,42 @@ pub struct TilesetRef<'a> {
     pub data: Cow<'a, [u32]>,
 }
 
+#[cfg(feature = "image")]
+impl Tileset<'static> {
+    pub fn from_image<I: image::GenericImageView<Pixel = image::Rgba<u8>>>(
+        image: &I,
+        size_of_tile: Vec2<u32>,
+    ) -> TilesetRef<'static> {
+        let pixel_size = Vec2::from(image.dimensions());
+        let tile_size = pixel_size / size_of_tile;
+        let num_tile = tile_size.x * tile_size.y;
+        let mut pixels = Vec::with_capacity(
+            num_tiles as usize * size_of_tile.x as usize * size_of_tile.y as usize,
+        );
+        for y in 0..tile_size.y {
+            for x in 0..tile_size.x {
+                for j in 0..size_of_tile.y {
+                    for i in 0..size_of_tile.x {
+                        let p: image::Rgba<u8> =
+                            image.get_pixel(size_of_tile.x * x + i, size_of_tile.y * y + j);
+                        pixels.push(
+                            ((p.0[3] as u32) << 24)
+                                | ((p.0[2] as u32) << 16)
+                                | ((p.0[1] as u32) << 8)
+                                | (p.0[0] as u32),
+                        );
+                    }
+                }
+            }
+        }
+        TilesetRef {
+            tile_size,
+            size_of_tile,
+            data: Cow::Owned(pixels),
+        }
+    }
+}
+
 /// An instruction to draw a tilemap.
 #[derive(Clone, Debug)]
 pub struct TilemapDrawData<'a> {
