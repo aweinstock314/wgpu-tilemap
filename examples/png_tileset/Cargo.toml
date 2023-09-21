@@ -1,0 +1,15 @@
+[package]
+name = "pngtileset"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.24", default-features = false, features=["png"] }
+winit = "0.28"
+wgpu = { git = "https://github.com/gfx-rs/wgpu/", branch = "trunk" }
+wgpu-example = { git = "https://github.com/gfx-rs/wgpu/", branch = "trunk" }
+wgpu-tilemap = { path = "../../", features = ["csv", "image"] }
+vek = "0.15"
+
+[patch.crates-io]
+wgpu = { git = "https://github.com/gfx-rs/wgpu/", branch = "trunk" }

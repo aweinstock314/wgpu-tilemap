@@ -16,11 +16,9 @@ let mut tilemap_pipeline = TilemapPipeline::new(device, surface_config.format, N
 tilemap_pipeline.set_camera(queue, FULLSCREEN_QUAD_CAMERA);
 
 // Create/load a tileset
-let tileset = TilesetRef {
-	pixel_size: Vec2::new(1, 2),
-	size_of_tile: Vec2::new(1, 1),
-	data: Cow::Borrowed(&[0xffffffff, 0x000000ff]),
-};
+use image::io::Reader as ImageReader;
+let tileset_image = ImageReader::open("tileset.png").unwrap().decode().unwrap();  
+let tileset = TilesetRef::from_image(&tileset_image, Vec2::new(32, 32));
 
 // Upload a tileset to the GPU
 tilemap_pipeline.upload_tilesets(device, queue, &[tileset]);

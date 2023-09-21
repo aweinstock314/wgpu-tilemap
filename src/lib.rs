@@ -74,6 +74,27 @@ impl TilemapRef<'static> {
             data: Cow::Owned(vec![0; size.x as usize * size.y as usize]),
         }
     }
+
+    #[cfg(feature = "csv")]
+    pub fn from_csv<R: std::io::Read>(size: Vec2<u32>, reader: R) -> Option<Self> {
+        use std::str::FromStr;
+        let mut csv_reader = csv::Reader::from_reader(reader);
+        let mut ret = Self::new_zeroed(size);
+        for (y, record) in csv_reader.records().enumerate() {
+            let record = record.ok()?;
+            if y > size.y as usize {
+                return Some(ret);
+            }
+            for (x, datum) in record.iter().enumerate() {
+                if x > size.x as usize {
+                    break;
+                }
+                let tile = u8::from_str(datum).ok()?;
+                ret.put_tile(x as u32, y as u32, tile);
+            }
+        }
+        return Some(ret);
+    }
 }
 
 impl<'a> TilemapRef<'a> {
@@ -103,14 +124,21 @@ pub struct TilesetRef<'a> {
 }
 
 #[cfg(feature = "image")]
-impl Tileset<'static> {
+impl TilesetRef<'static> {
     pub fn from_image<I: image::GenericImageView<Pixel = image::Rgba<u8>>>(
         image: &I,
         size_of_tile: Vec2<u32>,
     ) -> TilesetRef<'static> {
+        Self::from_image_with_spacing(image, size_of_tile, Vec2::broadcast(0))
+    }
+    pub fn from_image_with_spacing<I: image::GenericImageView<Pixel = image::Rgba<u8>>>(
+        image: &I,
+        size_of_tile: Vec2<u32>,
+        spacing: Vec2<u32>,
+    ) -> TilesetRef<'static> {
         let pixel_size = Vec2::from(image.dimensions());
         let tile_size = pixel_size / size_of_tile;
-        let num_tile = tile_size.x * tile_size.y;
+        let num_tiles = tile_size.x * tile_size.y;
         let mut pixels = Vec::with_capacity(
             num_tiles as usize * size_of_tile.x as usize * size_of_tile.y as usize,
         );
@@ -118,8 +146,10 @@ impl Tileset<'static> {
             for x in 0..tile_size.x {
                 for j in 0..size_of_tile.y {
                     for i in 0..size_of_tile.x {
-                        let p: image::Rgba<u8> =
-                            image.get_pixel(size_of_tile.x * x + i, size_of_tile.y * y + j);
+                        let p: image::Rgba<u8> = image.get_pixel(
+                            (size_of_tile.x + spacing.x) * x + i,
+                            (size_of_tile.y + spacing.y) * y + j,
+                        );
                         pixels.push(
                             ((p.0[3] as u32) << 24)
                                 | ((p.0[2] as u32) << 16)
@@ -131,7 +161,7 @@ impl Tileset<'static> {
             }
         }
         TilesetRef {
-            tile_size,
+            pixel_size,
             size_of_tile,
             data: Cow::Owned(pixels),
         }
@@ -550,7 +580,7 @@ impl TilemapPipeline {
                             origin: wgpu::Origin3d::ZERO,
                             aspect: wgpu::TextureAspect::All,
                         },
-                        bytemuck::cast_slice(&texture_data),
+                        bytemuck::cast_slice::<u32, u8>(&texture_data),
                         idl,
                         extent,
                     );
@@ -607,7 +637,7 @@ impl TilemapPipeline {
                             origin: wgpu::Origin3d::ZERO,
                             aspect: wgpu::TextureAspect::All,
                         },
-                        bytemuck::cast_slice(&texture_data),
+                        bytemuck::cast_slice::<u8, u8>(texture_data.as_ref()),
                         wgpu::ImageDataLayout {
                             offset: 0,
                             bytes_per_row: Some(size.x),
