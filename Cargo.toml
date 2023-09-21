@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Avi Weinstock <git@aweinstock.com>"]
 license = "Apache-2.0"
-categories = ["2d", "gamedev", "graphics", "rendering", "tile", "tiled", "wgpu"]
+categories = ["2d", "gamedev", "graphics", "rendering", "wgpu"]
 description = "wgpu middleware for GPU-accelerated tilemap rendering, primarily targeted at 2d games"
 readme = "README.md"
 
