@@ -1,12 +1,14 @@
 [package]
-name = "wgpu-tilemap"
-version = "0.1.0"
-edition = "2021"
 authors = ["Avi Weinstock <git@aweinstock.com>"]
-license = "Apache-2.0"
-categories = ["2d", "gamedev", "graphics", "rendering", "wgpu"]
+categories = ["game-development", "graphics", "rendering"]
 description = "wgpu middleware for GPU-accelerated tilemap rendering, primarily targeted at 2d games"
+edition = "2021"
+keywords = ["2d", "gamedev", "tile", "tiled", "wgpu"]
+license = "Apache-2.0"
+name = "wgpu-tilemap"
 readme = "README.md"
+repository = "https://github.com/aweinstock314/wgpu-tilemap"
+version = "0.1.0"
 
 [dependencies]
 bytemuck = { version = "1.13", features = ["derive"] }
